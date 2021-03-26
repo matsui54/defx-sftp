@@ -1,16 +1,16 @@
-from pynvim import Nvim
-import typing
-import site
-from pathlib import Path
-import re
-from paramiko import Transport, SFTPClient, RSAKey
-
-from defx.base.source import Base
-from defx.context import Context
 from defx.util import error
+from defx.context import Context
+from defx.base.source import Base
+from paramiko import Transport, SFTPClient, RSAKey
+import re
+from pathlib import Path
+import site
+import typing
+from pynvim import Nvim
 
 site.addsitedir(str(Path(__file__).parent.parent))
-from source.sftp_path import SFTPPath
+from sftp.sftp_path import SFTPPath
+
 
 KEY_PATH = str(Path.home().joinpath('.ssh/id_rsa'))
 
@@ -24,9 +24,10 @@ class Source(Base):
         self.kind: Kind = Kind(self.vim)
 
         self.client: SFTPClient = None
+        self.username: str = ''
+        self.hostname: str = ''
 
-    def init_client(self, path: str):
-        (hostname, username) = self._parse_arg(path)
+    def init_client(self, hostname, username) -> None:
         transport = Transport((hostname))
         rsa_private_key = RSAKey.from_private_key_file(KEY_PATH)
         transport.connect(username=username, pkey=rsa_private_key)
@@ -35,14 +36,13 @@ class Source(Base):
     def get_root_candidate(
             self, context: Context, path: Path
     ) -> typing.Dict[str, typing.Any]:
-        self.vim.call('defx#util#print_message', str(path))
         path = str(path)
-        if not self.client:
-            self.init_client(path)
-            path = '.'
+        self._parse_arg(path)
+        path = SFTPPath(self.client, path)
 
+        self.vim.call('defx#util#print_message', str(path))
         return {
-            'word': 'sftp://' + str(path),
+            'word': path.fullpath,
             'is_directory': True,
             'action__path': path,
         }
@@ -50,32 +50,25 @@ class Source(Base):
     def gather_candidates(
             self, context: Context, path: Path
     ) -> typing.List[typing.Dict[str, typing.Any]]:
-        self.vim.call('defx#util#print_message', str(path))
         path = str(path)
-        if not self.client:
-            self.init_client(path)
-            path = ''
-        path = '.'
+        self._parse_arg(path)
+        path = SFTPPath(self.client, path)
 
-        self.vim.call('defx#util#print_message', str(path))
         candidates = []
         for f in path.iterdir():
             candidates.append({
-                'word': f.name,
+                'word': f.stat.filename,
                 'is_directory': f.is_dir(),
                 'action__path': f,
             })
         return candidates
 
-    def _parse_arg(self, path: str) -> typing.List[str]:
-        username, hostname = re.search('\/\/(.+)@(.+)', path).groups()
-        self.vim.call('defx#util#print_message', str(username + hostname))
-        return (hostname, username)
-
-    def _get_path(self, path: Path) -> SFTPPath:
-        is_root = (str(path) == self.vim.call('getcwd'))
-        if is_root:
-            path = SFTPPath(self.client, '/')
-        else:
-            path = SFTPPath(self.client, str(path))
-        return path
+    def _parse_arg(self, path: str) -> None:
+        m = re.search('//(.+)@([^/]+)', path)
+        if m:
+            username, hostname = m.groups()
+            if (username != self.username or
+                    hostname != self.hostname):
+                self.init_client(hostname, username)
+                self.username = username
+                self.hostname = hostname
