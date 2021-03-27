@@ -27,6 +27,10 @@ class Source(Base):
         self.username: str = ''
         self.hostname: str = ''
 
+        self.vars = {
+            'root': None,
+        }
+
     def init_client(self, hostname, username) -> None:
         transport = Transport((hostname))
         rsa_private_key = RSAKey.from_private_key_file(KEY_PATH)
@@ -36,13 +40,15 @@ class Source(Base):
     def get_root_candidate(
             self, context: Context, path: Path
     ) -> typing.Dict[str, typing.Any]:
-        path = str(path)
-        self._parse_arg(path)
-        path = SFTPPath(self.client, path)
-
-        self.vim.call('defx#util#print_message', str(path))
+        path = self._parse_arg(str(path))
+        word = "//{}@{}".format(self.username, self.hostname) + str(path)
+        if word[-1:] != '/':
+            word += '/'
+        if self.vars['root']:
+            word = self.vim.call(self.vars['root'], str(path))
+        word = word.replace('\n', '\\n')
         return {
-            'word': path.fullpath,
+            'word': word,
             'is_directory': True,
             'action__path': path,
         }
@@ -50,25 +56,34 @@ class Source(Base):
     def gather_candidates(
             self, context: Context, path: Path
     ) -> typing.List[typing.Dict[str, typing.Any]]:
-        path = str(path)
-        self._parse_arg(path)
-        path = SFTPPath(self.client, path)
+        path = self._parse_arg(str(path))
+        self.vim.call('defx#util#print_message', str(path))
 
         candidates = []
         for f in path.iterdir():
             candidates.append({
-                'word': f.stat.filename,
+                'word': f.name,
                 'is_directory': f.is_dir(),
                 'action__path': f,
             })
         return candidates
 
     def _parse_arg(self, path: str) -> None:
-        m = re.search('//(.+)@([^/]+)', path)
+        m = re.search('//(.+)@(.+)', path)  # include username?
         if m:
-            username, hostname = m.groups()
+            username, tail = m.groups()
+            m_path = re.search('([^/]+)/(.*)', tail)
+            if m_path:
+                hostname, file = m_path.groups()
+            else:
+                hostname = tail
+                file = '.'
             if (username != self.username or
                     hostname != self.hostname):
+                # TODO: error handling(cannot connect)
                 self.init_client(hostname, username)
                 self.username = username
                 self.hostname = hostname
+            return SFTPPath(self.client, self.client.normalize(file))
+        else:
+            return SFTPPath(self.client, path)

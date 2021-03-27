@@ -1,3 +1,9 @@
+# ============================================================================
+# FILE: file.py
+# AUTHOR: Shougo Matsushita <Shougo.Matsu at gmail.com>
+# License: MIT license
+# ============================================================================
+
 from pathlib import Path
 from pynvim import Nvim
 import copy
@@ -12,7 +18,7 @@ import typing
 
 from defx.action import ActionAttr
 from defx.action import ActionTable
-from defx.base.kind import Base
+from defx.kind.file import Kind
 from defx.clipboard import ClipboardAction
 from defx.context import Context
 from defx.defx import Defx
@@ -36,22 +42,16 @@ def action(name: str, attr: ActionAttr = ActionAttr.NONE
     return wrapper
 
 
-class Kind(Base):
+class Kind(Kind):
 
     def __init__(self, vim: Nvim) -> None:
         self.vim = vim
-        self.name = 'gh'
+        self.name = 'sftp'
 
     def get_actions(self) -> typing.Dict[str, ActionTable]:
         actions = copy.copy(super().get_actions())
         actions.update(_action_table)
         return actions
-
-
-def check_output(view: View, cwd: str, args: typing.List[str]) -> None:
-    output = subprocess.check_output(args, cwd=cwd)
-    if output:
-        view.print_msg(output)
 
 
 def check_overwrite(view: View, dest: Path, src: Path) -> Path:
@@ -144,94 +144,254 @@ def _cd(view: View, defx: Defx, context: Context) -> None:
         view.search_file(prev_cwd, defx._index)
 
 
-@action(name='drop')
-def _drop(view: View, defx: Defx, context: Context) -> None:
+@action(name='check_redraw', attr=ActionAttr.NO_TAGETS)
+def _check_redraw(view: View, defx: Defx, context: Context) -> None:
+    # slow for remote path
+    pass
+
+
+@action(name='new_directory')
+def _new_directory(view: View, defx: Defx, context: Context) -> None:
     """
-    Open like :drop.
+    Create a new directory.
     """
-    cwd = view._vim.call('getcwd', -1)
-    command = context.args[0] if context.args else 'edit'
+    candidate = view.get_cursor_candidate(context.cursor)
+    if not candidate:
+        return
+
+    if candidate['is_opened_tree'] or candidate['is_root']:
+        cwd = str(candidate['action__path'])
+    else:
+        cwd = str(Path(candidate['action__path']).parent)
+
+    new_filename = cwd_input(
+        view._vim, cwd,
+        'Please input a new directory name: ', '', 'file')
+    if not new_filename:
+        return
+    filename = Path(cwd).joinpath(new_filename)
+
+    if not filename:
+        return
+    if filename.exists():
+        error(view._vim, f'{filename} already exists')
+        return
+
+    filename.mkdir(parents=True)
+    view.redraw(True)
+    view.search_recursive(filename, defx._index)
+
+
+@action(name='new_file')
+def _new_file(view: View, defx: Defx, context: Context) -> None:
+    """
+    Create a new file and it's parent directories.
+    """
+    candidate = view.get_cursor_candidate(context.cursor)
+    if not candidate:
+        return
+
+    if candidate['is_opened_tree'] or candidate['is_root']:
+        cwd = str(candidate['action__path'])
+    else:
+        cwd = str(Path(candidate['action__path']).parent)
+
+    new_filename = cwd_input(
+        view._vim, cwd,
+        'Please input a new filename: ', '', 'file')
+    if not new_filename:
+        return
+    isdir = new_filename[-1] == '/'
+    filename = Path(cwd).joinpath(new_filename)
+
+    if not filename:
+        return
+    if filename.exists():
+        error(view._vim, f'{filename} already exists')
+        return
+
+    if isdir:
+        filename.mkdir(parents=True)
+    else:
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        filename.touch()
+
+    view.redraw(True)
+    view.search_recursive(filename, defx._index)
+
+
+@action(name='new_multiple_files')
+def _new_multiple_files(view: View, defx: Defx, context: Context) -> None:
+    """
+    Create multiple files.
+    """
+    candidate = view.get_cursor_candidate(context.cursor)
+    if not candidate:
+        return
+
+    if candidate['is_opened_tree'] or candidate['is_root']:
+        cwd = str(candidate['action__path'])
+    else:
+        cwd = str(Path(candidate['action__path']).parent)
+
+    save_cwd = view._vim.call('getcwd')
+    cd(view._vim, cwd)
+
+    str_filenames: str = view._vim.call(
+        'input', 'Please input new filenames: ', '', 'file')
+    cd(view._vim, save_cwd)
+
+    if not str_filenames:
+        return None
+
+    for name in shlex.split(str_filenames):
+        is_dir = name[-1] == '/'
+
+        filename = Path(cwd).joinpath(name)
+        if filename.exists():
+            error(view._vim, f'{filename} already exists')
+            continue
+
+        if is_dir:
+            filename.mkdir(parents=True)
+        else:
+            if not filename.parent.exists():
+                filename.parent.mkdir(parents=True)
+            filename.touch()
+
+    view.redraw(True)
+    view.search_recursive(filename, defx._index)
+
+
+@action(name='paste', attr=ActionAttr.NO_TAGETS)
+def _paste(view: View, defx: Defx, context: Context) -> None:
+    candidate = view.get_cursor_candidate(context.cursor)
+    if not candidate:
+        return
+
+    if candidate['is_opened_tree'] or candidate['is_root']:
+        cwd = str(candidate['action__path'])
+    else:
+        cwd = str(Path(candidate['action__path']).parent)
+
+    action = view._clipboard.action
+    dest = None
+    for index, candidate in enumerate(view._clipboard.candidates):
+        path = candidate['action__path']
+        dest = Path(cwd).joinpath(path.name)
+        if dest.exists():
+            overwrite = check_overwrite(view, dest, path)
+            if overwrite == Path(''):
+                continue
+            dest = overwrite
+
+        if not path.exists() or path == dest:
+            continue
+
+        view.print_msg(
+            f'[{index + 1}/{len(view._clipboard.candidates)}] {path}')
+
+        if dest.exists() and action != ClipboardAction.MOVE:
+            # Must remove dest before
+            if not dest.is_symlink() and dest.is_dir():
+                shutil.rmtree(str(dest))
+            else:
+                dest.unlink()
+
+        if action == ClipboardAction.COPY:
+            if path.is_dir():
+                shutil.copytree(str(path), dest)
+            else:
+                shutil.copy2(str(path), dest)
+        elif action == ClipboardAction.MOVE:
+            shutil.move(str(path), cwd)
+
+            # Check rename
+            if not path.is_dir():
+                view._vim.call('defx#util#buffer_rename',
+                               view._vim.call('bufnr', str(path)), str(dest))
+        elif action == ClipboardAction.LINK:
+            # Create the symbolic link to dest
+            dest.symlink_to(path, target_is_directory=path.is_dir())
+
+        view._vim.command('redraw')
+    if action == ClipboardAction.MOVE:
+        # Clear clipboard after move
+        view._clipboard.candidates = []
+    view._vim.command('echo')
+
+    view.redraw(True)
+    if dest:
+        view.search_recursive(dest, defx._index)
+
+
+@action(name='remove', attr=ActionAttr.REDRAW)
+def _remove(view: View, defx: Defx, context: Context) -> None:
+    """
+    Delete the file or directory.
+    """
+    if not context.targets:
+        return
+
+    force = context.args[0] == 'force' if context.args else False
+    if not force:
+        message = 'Are you sure you want to delete {}?'.format(
+            str(context.targets[0]['action__path'])
+            if len(context.targets) == 1
+            else str(len(context.targets)) + ' files')
+        if not confirm(view._vim, message):
+            return
 
     for target in context.targets:
         path = target['action__path']
 
         if path.is_dir():
-            view.cd(defx, defx._source.name, str(path), context.cursor)
-            continue
-
-        bufnr = view._vim.call('bufnr', f'^{path}$')
-        winids = view._vim.call('win_findbuf', bufnr)
-
-        if winids:
-            view._vim.call('win_gotoid', winids[0])
+            shutil.rmtree(str(path))
         else:
-            # Jump to the last accessed window
-            view._vim.command('wincmd p')
+            path.unlink()
 
-            if view._vim.call('win_getid') == view._winid:
-                view._vim.command('wincmd w')
-
-            if not view._vim.call('haslocaldir'):
-                try:
-                    path = path.relative_to(cwd)
-                except ValueError:
-                    pass
-
-            view._vim.call('defx#util#execute_path', command, str(path))
-
-        view.restore_previous_buffer(view._prev_bufnr)
-    view.close_preview()
+        view._vim.call('defx#util#buffer_delete',
+                       view._vim.call('bufnr', str(path)))
 
 
-@action(name='open')
-def _open(view: View, defx: Defx, context: Context) -> None:
+@action(name='rename')
+def _rename(view: View, defx: Defx, context: Context) -> None:
     """
-    Open the file.
+    Rename the file or directory.
     """
-    cwd = view._vim.call('getcwd', -1)
-    command = context.args[0] if context.args else 'edit'
-    choose = command == 'choose' and (
-        view._vim.call('exists', 'g:loaded_choosewin')
-        or view._vim.call('hasmapto', '<Plug>(choosewin)', 'n'))
-    previewed_buffers = view._vim.vars['defx#_previewed_buffers']
+
+    if len(context.targets) > 1:
+        # ex rename
+        view._vim.call('defx#exrename#create_buffer',
+                       [{'action__path': str(x['action__path'])}
+                        for x in context.targets],
+                       {'buffer_name': 'defx'})
+        return
+
     for target in context.targets:
-        path = target['action__path']
-
-        if target['is_directory']:
-            view.cd(defx, defx._source.name, str(path), context.cursor)
+        old = target['action__path']
+        new_filename = cwd_input(
+            view._vim, defx._cwd,
+            f'Old name: {old}\nNew name: ', str(old), 'file')
+        view._vim.command('redraw')
+        if not new_filename:
+            return
+        new = Path(defx._cwd).joinpath(new_filename)
+        if not new or new == old:
+            continue
+        if str(new).lower() != str(old).lower() and new.exists():
+            error(view._vim, f'{new} already exists')
             continue
 
-        if not view._vim.call('haslocaldir'):
-            try:
-                path = path.relative_to(cwd)
-            except ValueError:
-                pass
+        if not new.parent.exists():
+            new.parent.mkdir(parents=True)
+        old.rename(new)
 
-        if choose:
-            switch(view)
+        # Check rename
+        # The old is directory, the path may be matched opened file
+        if not new.is_dir():
+            view._vim.call('defx#util#buffer_rename',
+                           view._vim.call('bufnr', str(old)), str(new))
 
-        view._vim.call('defx#util#execute_path',
-                       'edit' if choose else command, str(path))
-
-        bufnr = str(view._vim.call('bufnr', str(path)))
-        if bufnr in previewed_buffers:
-            previewed_buffers.pop(bufnr)
-            view._vim.vars['defx#_previewed_buffers'] = previewed_buffers
-
-        view.restore_previous_buffer(view._prev_bufnr)
-    view.close_preview()
-
-
-@action(name='open_directory')
-def _open_directory(view: View, defx: Defx, context: Context) -> None:
-    """
-    Open the directory.
-    """
-    if context.args:
-        path = Path(context.args[0])
-    else:
-        for target in context.targets:
-            path = target['action__path']
-
-    if path.is_dir():
-        view.cd(defx, 'file', str(path), context.cursor)
+        view.redraw(True)
+        view.search_recursive(new, defx._index)

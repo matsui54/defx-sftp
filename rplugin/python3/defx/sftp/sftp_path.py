@@ -20,22 +20,15 @@ def _get_real_path(path):
 
 class SFTPPath(PurePosixPath):
     def __new__(cls, sftp: SFTPClient, path: str, stat: SFTPAttributes = None):
-        str = _get_real_path(path)
-        return super().__new__(cls, str)
-
-    def __init__(self, sftp: SFTPClient, path: str,
-                 stat: SFTPAttributes = None):
-        # super().__new__(path)
+        self = super().__new__(cls, path)
         self.sftp: SFTPClient = sftp
-        self.path: str = _get_real_path(path)
-        self.fullpath = path
-        if stat:
-            self.stat = stat
-        else:
-            self.stat = sftp.lstat(self.path)
+        # self.path: str = _get_real_path(path)
+        self.path: str = path
+        self._stat: SFTPAttributes = stat
+        return self
 
     def __eq__(self, other):
-        return self.fullpath == str(other)
+        return self.__str__() == str(other)
 
     def __str__(self):
         return self.path
@@ -44,14 +37,29 @@ class SFTPPath(PurePosixPath):
         for f in self.sftp.listdir_attr(self.path):
             yield self.joinpath(f.filename, f)
 
+    def relative_to(self, other) -> SFTPPath:
+        return self
+
     def joinpath(self, name: str, stat: SFTPAttributes = None):
-        new_path = self.fullpath + '/' + name
+        new_path = self.path + '/' + name
         return SFTPPath(self.sftp, new_path, stat)
 
+    def exists(self):
+        try:
+            bool(self.stat())
+        except FileNotFoundError:
+            return False
+
+    def stat(self) -> SFTPAttributes:
+        if self._stat:
+            return self._stat
+        else:
+            return self.sftp.stat(self.path)
+
     def is_dir(self) -> bool:
-        mode = self.stat.st_mode
+        mode = self.stat().st_mode
         return not stat.S_ISREG(mode)
 
     def is_symlink(self) -> bool:
-        mode = self.stat.st_mode
+        mode = self.stat().st_mode
         return stat.S_ISLNK(mode)
