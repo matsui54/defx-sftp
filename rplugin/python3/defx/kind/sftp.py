@@ -15,16 +15,21 @@ import subprocess
 import re
 import time
 import typing
+import site
+from paramiko import SFTPFile, SFTPClient
 
 from defx.action import ActionAttr
 from defx.action import ActionTable
-from defx.kind.file import Kind
+from defx.kind.file import Kind as Base
 from defx.clipboard import ClipboardAction
 from defx.context import Context
 from defx.defx import Defx
 from defx.util import cd, cwd_input, confirm, error, Candidate
 from defx.util import readable, fnamemodify
 from defx.view import View
+
+site.addsitedir(str(Path(__file__).parent.parent))
+from sftp.sftp_path import SFTPPath
 
 _action_table: typing.Dict[str, ActionTable] = {}
 
@@ -42,7 +47,7 @@ def action(name: str, attr: ActionAttr = ActionAttr.NONE
     return wrapper
 
 
-class Kind(Kind):
+class Kind(Base):
 
     def __init__(self, vim: Nvim) -> None:
         self.vim = vim
@@ -54,9 +59,9 @@ class Kind(Kind):
         return actions
 
 
-def check_overwrite(view: View, dest: Path, src: Path) -> Path:
+def check_overwrite(view: View, dest: SFTPPath, src: SFTPPath) -> str:
     if not src.exists() or not dest.exists():
-        return Path('')
+        return ''
 
     s_stat = src.stat()
     s_mtime = s_stat.st_mtime
@@ -70,34 +75,21 @@ def check_overwrite(view: View, dest: Path, src: Path) -> Path:
     choice: int = view._vim.call('defx#util#confirm',
                                  f'{dest} already exists.  Overwrite?',
                                  '&Force\n&No\n&Rename\n&Time\n&Underbar', 0)
-    ret: Path = Path('')
+    ret = ''
     if choice == 1:
-        ret = dest
+        ret = str(dest)
     elif choice == 2:
-        ret = Path('')
+        ret = ''
     elif choice == 3:
-        ret = Path(view._vim.call(
+        ret = view._vim.call(
             'defx#util#input',
             f'{src} -> ', str(dest),
-            ('dir' if src.is_dir() else 'file')))
+            ('dir' if src.is_dir() else 'file'))
     elif choice == 4 and d_mtime < s_mtime:
-        ret = src
+        ret = str(src)
     elif choice == 5:
-        ret = Path(str(dest) + '_')
+        ret = str(dest) + '_'
     return ret
-
-
-def execute_job(view: View, args: typing.List[str]) -> None:
-    view._vim.call('defx#util#close_async_job')
-
-    if view._vim.call('has', 'nvim'):
-        jobfunc = 'jobstart'
-        jobopts = {}
-    else:
-        jobfunc = 'job_start'
-        jobopts = {'in_io': 'null', 'out_io': 'null', 'err_io': 'null'}
-
-    view._vim.vars['defx#_async_job'] = view._vim.call(jobfunc, args, jobopts)
 
 
 def switch(view: View) -> None:
@@ -111,43 +103,56 @@ def switch(view: View) -> None:
         view._vim.command('noautocmd rightbelow vnew')
 
 
-@action(name='cd')
-def _cd(view: View, defx: Defx, context: Context) -> None:
-    """
-    Change the current directory.
-    """
-    source_name = defx._source.name
-    is_parent = context.args and context.args[0] == '..'
-    prev_cwd = Path(defx._cwd)
-
-    if is_parent:
-        path = prev_cwd.parent
-    else:
-        if context.args:
-            if len(context.args) > 1:
-                source_name = context.args[0]
-                path = Path(context.args[1])
-            else:
-                path = Path(context.args[0])
-        else:
-            path = Path.home()
-        path = prev_cwd.joinpath(path)
-        if not readable(path):
-            error(view._vim, f'{path} is invalid.')
-        path = path.resolve()
-        if source_name == 'file' and not path.is_dir():
-            error(view._vim, f'{path} is invalid.')
-            return
-
-    view.cd(defx, source_name, str(path), context.cursor)
-    if is_parent:
-        view.search_file(prev_cwd, defx._index)
-
-
 @action(name='check_redraw', attr=ActionAttr.NO_TAGETS)
 def _check_redraw(view: View, defx: Defx, context: Context) -> None:
     # slow for remote path
     pass
+
+
+'''
+@action(name='copy')
+def _copy(view: View, defx: Defx, context: Context) -> None:
+    if not context.targets:
+        return
+
+    message = 'Copy to the clipboard: {}'.format(
+        str(context.targets[0]['action__path'])
+        if len(context.targets) == 1
+        else str(len(context.targets)) + ' files')
+    view.print_msg(message)
+
+    view._clipboard.action = ClipboardAction.COPY
+    view._clipboard.candidates = context.targets
+
+
+@action(name='link')
+def _link(view: View, defx: Defx, context: Context) -> None:
+    if not context.targets:
+        return
+
+    message = 'Link to the clipboard: {}'.format(
+        str(context.targets[0]['action__path'])
+        if len(context.targets) == 1
+        else str(len(context.targets)) + ' files')
+    view.print_msg(message)
+
+    view._clipboard.action = ClipboardAction.LINK
+    view._clipboard.candidates = context.targets
+
+
+@action(name='move')
+def _move(view: View, defx: Defx, context: Context) -> None:
+    if not context.targets:
+        return
+
+    message = 'Move to the clipboard: {}'.format(
+        str(context.targets[0]['action__path'])
+        if len(context.targets) == 1
+        else str(len(context.targets)) + ' files')
+    view.print_msg(message)
+    view._clipboard.action = ClipboardAction.MOVE
+    view._clipboard.candidates = context.targets
+'''
 
 
 @action(name='new_directory')
@@ -164,12 +169,14 @@ def _new_directory(view: View, defx: Defx, context: Context) -> None:
     else:
         cwd = str(Path(candidate['action__path']).parent)
 
-    new_filename = cwd_input(
-        view._vim, cwd,
-        'Please input a new directory name: ', '', 'file')
+    new_filename: str = str(view._vim.call(
+        'defx#util#input',
+        'Please input a new filename: ', '', 'file'))
     if not new_filename:
         return
-    filename = Path(cwd).joinpath(new_filename)
+
+    client: SFTPClient = defx._source.client
+    filename = SFTPPath(client, cwd).joinpath(new_filename)
 
     if not filename:
         return
@@ -196,13 +203,15 @@ def _new_file(view: View, defx: Defx, context: Context) -> None:
     else:
         cwd = str(Path(candidate['action__path']).parent)
 
-    new_filename = cwd_input(
-        view._vim, cwd,
-        'Please input a new filename: ', '', 'file')
+    new_filename: str = str(view._vim.call(
+        'defx#util#input',
+        'Please input a new filename: ', '', 'file'))
     if not new_filename:
         return
+
+    client: SFTPClient = defx._source.client
     isdir = new_filename[-1] == '/'
-    filename = Path(cwd).joinpath(new_filename)
+    filename = SFTPPath(client, cwd).joinpath(new_filename)
 
     if not filename:
         return
@@ -234,20 +243,17 @@ def _new_multiple_files(view: View, defx: Defx, context: Context) -> None:
     else:
         cwd = str(Path(candidate['action__path']).parent)
 
-    save_cwd = view._vim.call('getcwd')
-    cd(view._vim, cwd)
-
     str_filenames: str = view._vim.call(
         'input', 'Please input new filenames: ', '', 'file')
-    cd(view._vim, save_cwd)
 
     if not str_filenames:
         return None
 
+    client: SFTPClient = defx._source.client
     for name in shlex.split(str_filenames):
         is_dir = name[-1] == '/'
 
-        filename = Path(cwd).joinpath(name)
+        filename = SFTPPath(client, cwd).joinpath(name)
         if filename.exists():
             error(view._vim, f'{filename} already exists')
             continue
@@ -268,6 +274,7 @@ def _paste(view: View, defx: Defx, context: Context) -> None:
     candidate = view.get_cursor_candidate(context.cursor)
     if not candidate:
         return
+    client: SFTPClient = defx._source.client
 
     if candidate['is_opened_tree'] or candidate['is_root']:
         cwd = str(candidate['action__path'])
@@ -278,12 +285,12 @@ def _paste(view: View, defx: Defx, context: Context) -> None:
     dest = None
     for index, candidate in enumerate(view._clipboard.candidates):
         path = candidate['action__path']
-        dest = Path(cwd).joinpath(path.name)
+        dest = SFTPPath(client, cwd).joinpath(path.name)
         if dest.exists():
             overwrite = check_overwrite(view, dest, path)
-            if overwrite == Path(''):
+            if overwrite == '':
                 continue
-            dest = overwrite
+            dest = SFTPPath(client, overwrite)
 
         if not path.exists() or path == dest:
             continue
@@ -304,7 +311,7 @@ def _paste(view: View, defx: Defx, context: Context) -> None:
             else:
                 shutil.copy2(str(path), dest)
         elif action == ClipboardAction.MOVE:
-            shutil.move(str(path), cwd)
+            client.rename(str(path), cwd)
 
             # Check rename
             if not path.is_dir():
@@ -346,12 +353,17 @@ def _remove(view: View, defx: Defx, context: Context) -> None:
         path = target['action__path']
 
         if path.is_dir():
-            shutil.rmtree(str(path))
+            path.rmdir()
         else:
             path.unlink()
 
         view._vim.call('defx#util#buffer_delete',
                        view._vim.call('bufnr', str(path)))
+
+
+@action(name='remove_trash', attr=ActionAttr.REDRAW)
+def _remove_trash(view: View, defx: Defx, context: Context) -> None:
+    view.print_msg('remove_trash is not supported')
 
 
 @action(name='rename')
@@ -368,15 +380,15 @@ def _rename(view: View, defx: Defx, context: Context) -> None:
                        {'buffer_name': 'defx'})
         return
 
+    client: SFTPClient = defx._source.client
     for target in context.targets:
         old = target['action__path']
-        new_filename = cwd_input(
-            view._vim, defx._cwd,
-            f'Old name: {old}\nNew name: ', str(old), 'file')
+        new_filename: str = view._vim.call(
+            'input', f'Old name: {old}\nNew name: ', str(old), 'file')
         view._vim.command('redraw')
         if not new_filename:
             return
-        new = Path(defx._cwd).joinpath(new_filename)
+        new = SFTPPath(client, new_filename)
         if not new or new == old:
             continue
         if str(new).lower() != str(old).lower() and new.exists():

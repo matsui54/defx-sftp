@@ -26,6 +26,7 @@ class Source(Base):
         self.client: SFTPClient = None
         self.username: str = ''
         self.hostname: str = ''
+        self.path_head: str = ''
 
         self.vars = {
             'root': None,
@@ -40,8 +41,11 @@ class Source(Base):
     def get_root_candidate(
             self, context: Context, path: Path
     ) -> typing.Dict[str, typing.Any]:
-        path = self._parse_arg(str(path))
-        word = "//{}@{}".format(self.username, self.hostname) + str(path)
+        self.vim.call('defx#util#print_message', str(path))
+        path_str = self._parse_arg(str(path))
+        path = SFTPPath(self.client, path_str)
+        word = str(path)
+        self.vim.call('defx#util#print_message', str(path))
         if word[-1:] != '/':
             word += '/'
         if self.vars['root']:
@@ -56,8 +60,8 @@ class Source(Base):
     def gather_candidates(
             self, context: Context, path: Path
     ) -> typing.List[typing.Dict[str, typing.Any]]:
-        path = self._parse_arg(str(path))
-        self.vim.call('defx#util#print_message', str(path))
+        path_str = self._parse_arg(str(path))
+        path = SFTPPath(self.client, path_str)
 
         candidates = []
         for f in path.iterdir():
@@ -68,22 +72,22 @@ class Source(Base):
             })
         return candidates
 
-    def _parse_arg(self, path: str) -> None:
-        m = re.search('//(.+)@(.+)', path)  # include username?
+    def _parse_arg(self, path: str) -> str:
+        head, rmt_path = SFTPPath.parse_path(path)
+        if head is None:
+            return path
+        m = re.match('//(.+)@(.+)', head)  # include username?
         if m:
-            username, tail = m.groups()
-            m_path = re.search('([^/]+)/(.*)', tail)
-            if m_path:
-                hostname, file = m_path.groups()
-            else:
-                hostname = tail
-                file = '.'
-            if (username != self.username or
-                    hostname != self.hostname):
-                # TODO: error handling(cannot connect)
-                self.init_client(hostname, username)
-                self.username = username
-                self.hostname = hostname
-            return SFTPPath(self.client, self.client.normalize(file))
+            username, hostname = m.groups()
         else:
-            return SFTPPath(self.client, path)
+            hostname = re.match('//(.+)', head).groups()[0]
+            username = ''
+        if (username != self.username or
+                hostname != self.hostname):
+            # TODO: error handling(cannot connect)
+            self.init_client(hostname, username)
+            self.username = username
+            self.hostname = hostname
+        if rmt_path == '':
+            rmt_path = '.'
+        return self.client.normalize(rmt_path)

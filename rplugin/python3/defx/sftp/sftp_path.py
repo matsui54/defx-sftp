@@ -7,7 +7,7 @@ from paramiko import SFTPClient, SFTPFile, SFTPAttributes
 
 
 def _get_real_path(path):
-    m = re.search('//.+@(.*)', path)
+    m = re.search('sftp//.+@(.*)', path)
     if m:
         m_path = re.search('[^/]*/(.*)', m.groups()[0])
         if m_path:
@@ -19,13 +19,22 @@ def _get_real_path(path):
 
 
 class SFTPPath(PurePosixPath):
-    def __new__(cls, sftp: SFTPClient, path: str, stat: SFTPAttributes = None):
+    def __new__(cls, client: SFTPClient, path: str,
+                stat: SFTPAttributes = None):
         self = super().__new__(cls, path)
-        self.sftp: SFTPClient = sftp
-        # self.path: str = _get_real_path(path)
+        self.client: SFTPClient = client
         self.path: str = path
+        # self.uri: str = path  # sftp://user@host/path
+        # self._head = head  # sftp://user@host/
         self._stat: SFTPAttributes = stat
         return self
+
+    @classmethod
+    def parse_path(cls, path: str) -> typing.Tuple[str]:
+        head, path_str = re.match('(//[^/]+)?/?(.*)', path).groups()
+        if head is None:
+            path_str = '/' + path_str
+        return (head, path_str)
 
     def __eq__(self, other):
         return self.__str__() == str(other)
@@ -33,28 +42,11 @@ class SFTPPath(PurePosixPath):
     def __str__(self):
         return self.path
 
-    def iterdir(self) -> typing.Iterable(SFTPPath):
-        for f in self.sftp.listdir_attr(self.path):
-            yield self.joinpath(f.filename, f)
-
-    def relative_to(self, other) -> SFTPPath:
-        return self
-
-    def joinpath(self, name: str, stat: SFTPAttributes = None):
-        new_path = self.path + '/' + name
-        return SFTPPath(self.sftp, new_path, stat)
-
     def exists(self):
         try:
-            bool(self.stat())
+            return bool(self.stat())
         except FileNotFoundError:
             return False
-
-    def stat(self) -> SFTPAttributes:
-        if self._stat:
-            return self._stat
-        else:
-            return self.sftp.stat(self.path)
 
     def is_dir(self) -> bool:
         mode = self.stat().st_mode
@@ -63,3 +55,54 @@ class SFTPPath(PurePosixPath):
     def is_symlink(self) -> bool:
         mode = self.stat().st_mode
         return stat.S_ISLNK(mode)
+
+    def iterdir(self) -> typing.Iterable(SFTPPath):
+        for f in self.client.listdir_attr(self.path):
+            yield self.joinpath(f.filename, f)
+
+    def joinpath(self, name: str, stat: SFTPAttributes = None):
+        sep = '' if self.path == '/' else '/'
+        new_path = self.path + sep + name
+        return SFTPPath(self.client, new_path, stat)
+
+    def mkdir(self, parents=False, exist_ok=False):
+        # TODO: mkdir recursively
+        self.client.mkdir(self.path)
+
+    @property
+    def parent(self):
+        if self.path == '/':
+            return self
+        parts = self.path.split('/')
+        new_path = '/'.join(parts[:-1])
+        return SFTPPath(self.client, new_path)
+
+    def relative_to(self, other) -> SFTPPath:
+        return self
+
+    def rename(self, new: SFTPPath) -> SFTPPath:
+        self.client.rename(self.path, new.path)
+
+    def resolve(self) -> SFTPPath:
+        client = self.client
+        new_path = client.normalize(self.path)
+        return SFTPPath(client, new_path)
+
+    def rmdir(self):
+        # TODO: remove recursively
+        self.client.rmdir(self.path)
+
+    def stat(self) -> SFTPAttributes:
+        if self._stat:
+            return self._stat
+        else:
+            return self.client.stat(self.path)
+
+    def touch(self, exist_ok=True):
+        self.client.open(self.path, mode='x')
+
+    def unlink(self, missing_ok=False):
+        self.client.unlink(self.path)
+
+if __name__ == '__main__':
+    print(SFTPPath.parse_path('//hoge@13.4.3'))
