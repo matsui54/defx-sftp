@@ -12,9 +12,6 @@ site.addsitedir(str(Path(__file__).parent.parent))
 from sftp.sftp_path import SFTPPath
 
 
-KEY_PATH = str(Path.home().joinpath('.ssh/id_rsa'))
-
-
 class Source(Base):
     def __init__(self, vim: Nvim) -> None:
         super().__init__(vim)
@@ -33,8 +30,10 @@ class Source(Base):
         }
 
     def init_client(self, hostname, username) -> None:
+        key_path = self.vim.vars.get('defx_sftp#key_path',
+                                     self.vim.call('expand', '~/.ssh/id_rsa'))
         transport = Transport((hostname))
-        rsa_private_key = RSAKey.from_private_key_file(KEY_PATH)
+        rsa_private_key = RSAKey.from_private_key_file(key_path)
         transport.connect(username=username, pkey=rsa_private_key)
         self.client = SFTPClient.from_transport(transport)
 
@@ -45,7 +44,6 @@ class Source(Base):
         path_str = self._parse_arg(str(path))
         path = SFTPPath(self.client, path_str)
         word = str(path)
-        self.vim.call('defx#util#print_message', str(path))
         if word[-1:] != '/':
             word += '/'
         if self.vars['root']:

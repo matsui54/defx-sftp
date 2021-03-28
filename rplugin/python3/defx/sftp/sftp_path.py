@@ -42,6 +42,19 @@ class SFTPPath(PurePosixPath):
     def __str__(self):
         return self.path
 
+    def copy(self, dest: SFTPPath) -> None:
+        fl = self.client.open(self.path)
+        self.client.putfo(fl, str(dest))
+
+    def copy_recursive(self, dest: SFTPPath) -> None:
+        if self.is_file():
+            self.copy(dest)
+        else:
+            dest.mkdir()
+            for f in self.iterdir():
+                new_dest = dest.joinpath(f.name)
+                f.copy_recursive(new_dest)
+
     def exists(self):
         try:
             return bool(self.stat())
@@ -49,8 +62,11 @@ class SFTPPath(PurePosixPath):
             return False
 
     def is_dir(self) -> bool:
+        return not self.is_file()
+
+    def is_file(self) -> bool:
         mode = self.stat().st_mode
-        return not stat.S_ISREG(mode)
+        return stat.S_ISREG(mode)
 
     def is_symlink(self) -> bool:
         mode = self.stat().st_mode
@@ -89,8 +105,18 @@ class SFTPPath(PurePosixPath):
         return SFTPPath(client, new_path)
 
     def rmdir(self):
-        # TODO: remove recursively
+        """
+        Remove directory. Directory must be empty.
+        """
         self.client.rmdir(self.path)
+
+    def rmdir_recursive(self):
+        if self.is_file():
+            self.unlink()
+        else:
+            for f in self.iterdir():
+                f.rmdir_recursive()
+            self.rmdir()
 
     def stat(self) -> SFTPAttributes:
         if self._stat:
@@ -103,6 +129,7 @@ class SFTPPath(PurePosixPath):
 
     def unlink(self, missing_ok=False):
         self.client.unlink(self.path)
+
 
 if __name__ == '__main__':
     print(SFTPPath.parse_path('//hoge@13.4.3'))

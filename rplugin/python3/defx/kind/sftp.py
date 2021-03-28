@@ -307,11 +307,11 @@ def _paste(view: View, defx: Defx, context: Context) -> None:
 
         if action == ClipboardAction.COPY:
             if path.is_dir():
-                shutil.copytree(str(path), dest)
+                path.copy_recursive(dest)
             else:
-                shutil.copy2(str(path), dest)
+                path.copy(dest)
         elif action == ClipboardAction.MOVE:
-            client.rename(str(path), cwd)
+            path.rename(dest)
 
             # Check rename
             if not path.is_dir():
@@ -353,7 +353,7 @@ def _remove(view: View, defx: Defx, context: Context) -> None:
         path = target['action__path']
 
         if path.is_dir():
-            path.rmdir()
+            path.rmdir_recursive()
         else:
             path.unlink()
 
