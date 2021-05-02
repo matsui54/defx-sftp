@@ -3,7 +3,7 @@ import typing
 from pathlib import PurePosixPath
 import stat
 import re
-from paramiko import SFTPClient, SFTPFile, SFTPAttributes
+from paramiko import SFTPClient, SFTPAttributes
 
 
 def _get_real_path(path):

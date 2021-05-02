@@ -17,10 +17,11 @@ class Source(Base):
         super().__init__(vim)
         self.name = 'sftp'
 
-        from kind.sftp import Kind
-        self.kind: Kind = Kind(self.vim)
-
         self.client: SFTPClient = None
+
+        from kind.sftp import Kind
+        self.kind: Kind = Kind(self.vim, self)
+
         self.username: str = ''
         self.hostname: str = ''
         self.path_head: str = ''
