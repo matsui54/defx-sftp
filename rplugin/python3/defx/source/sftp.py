@@ -9,7 +9,7 @@ import typing
 from pynvim import Nvim
 
 site.addsitedir(str(Path(__file__).parent.parent))
-from sftp.sftp_path import SFTPPath
+from sftp import SFTPPath  # noqa: E402
 
 
 class Source(Base):

@@ -4,7 +4,6 @@
 # License: MIT license
 # ============================================================================
 
-from sftp.sftp_path import SFTPPath
 from pathlib import Path
 from pynvim import Nvim
 import site
@@ -19,6 +18,7 @@ from defx.defx import Defx
 from defx.view import View
 
 site.addsitedir(str(Path(__file__).parent.parent))
+from sftp import SFTPPath  # noqa: E402
 
 
 class Kind(Base):
