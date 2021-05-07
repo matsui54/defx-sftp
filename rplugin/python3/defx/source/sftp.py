@@ -1,12 +1,15 @@
-from defx.util import error
-from defx.context import Context
-from defx.base.source import Base
-from paramiko import Transport, SFTPClient, RSAKey, SSHConfig
 import re
 from pathlib import Path
 import site
 import typing
+from urllib.parse import urlparse
+
 from pynvim import Nvim
+from paramiko import Transport, SFTPClient, RSAKey, SSHConfig
+
+from defx.util import error
+from defx.context import Context
+from defx.base.source import Base
 
 site.addsitedir(str(Path(__file__).parent.parent))
 from sftp import SFTPPath  # noqa: E402
@@ -18,6 +21,7 @@ class Source(Base):
         self.name = 'sftp'
 
         self.client: SFTPClient = None
+        self.config: SSHConfig = None
 
         from kind.sftp import Kind
         self.kind: Kind = Kind(self.vim, self)
@@ -31,6 +35,9 @@ class Source(Base):
         }
 
     def init_client(self, hostname, username, port=None) -> None:
+        self.username = username
+        self.hostname = hostname
+
         key_path = ''
         conf_path = Path("~/.ssh/config").expanduser()
         if conf_path.exists():
@@ -84,26 +91,14 @@ class Source(Base):
         return candidates
 
     def _parse_arg(self, path: str) -> str:
-        head, rmt_path = SFTPPath.parse_path(path)
-        if head is None:
-            return path
-        port = None
-        m = re.match(r"//(.+)@(.+):(\d+)", head)
-        if m:
-            username, hostname, port = m.groups()
-            port = int(port)
-        else:
-            m = re.match("//(.+)@(.+)", head)  # include username?
-            if m:
-                username, hostname = m.groups()
-            else:
-                hostname = re.match("//(.+)", head).groups()[0]
-                username = ""
-        if username != self.username or hostname != self.hostname:
+        parsed = urlparse(path)
+        if (parsed.username is None and parsed.hostname is None):
+            return parsed.path
+        if (parsed.username != self.username or
+                parsed.hostname != self.hostname):
             # TODO: error handling(cannot connect)
-            self.init_client(hostname, username, port=port)
-            self.username = username
-            self.hostname = hostname
-        if rmt_path == '':
+            self.init_client(parsed.hostname, parsed.username, parsed.port)
+        rmt_path = parsed.path
+        if not rmt_path:
             rmt_path = '.'
         return self.client.normalize(rmt_path)

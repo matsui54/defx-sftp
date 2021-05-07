@@ -2,20 +2,7 @@ from __future__ import annotations
 import typing
 from pathlib import PurePosixPath
 import stat
-import re
 from paramiko import SFTPClient, SFTPAttributes
-
-
-def _get_real_path(path):
-    m = re.search('sftp//.+@(.*)', path)
-    if m:
-        m_path = re.search('[^/]*/(.*)', m.groups()[0])
-        if m_path:
-            return m_path.groups()[0]
-        else:
-            return '.'
-    else:
-        return path
 
 
 class SFTPPath(PurePosixPath):
@@ -24,17 +11,8 @@ class SFTPPath(PurePosixPath):
         self = super().__new__(cls, path)
         self.client: SFTPClient = client
         self.path: str = path
-        # self.uri: str = path  # sftp://user@host/path
-        # self._head = head  # sftp://user@host/
         self._stat: SFTPAttributes = stat
         return self
-
-    @classmethod
-    def parse_path(cls, path: str) -> typing.Tuple[str]:
-        head, path_str = re.match('(//[^/]+)?/?(.*)', path).groups()
-        if head is None:
-            path_str = '/' + path_str
-        return (head, path_str)
 
     def __eq__(self, other):
         return self.__str__() == str(other)
