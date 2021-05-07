@@ -31,18 +31,22 @@ class Source(Base):
         }
 
     def init_client(self, hostname, username, port=None) -> None:
-        self.config = SSHConfig.from_path(Path("~/.ssh/config").expanduser())
-        conf = self.config.lookup(hostname)
-        if "identityfile" in conf:
-            key_path = conf["identityfile"][0]
-        else:
-            key_path = self.vim.vars.get(
-                "defx_sftp#key_path", self.vim.call("expand", "~/.ssh/id_rsa")
-            )
-
-        if port is None:
+        key_path = ''
+        conf_path = Path("~/.ssh/config").expanduser()
+        if conf_path.exists():
+            self.config = SSHConfig.from_path(conf_path)
+            conf = self.config.lookup(hostname)
+            if "identityfile" in conf:
+                key_path = conf["identityfile"][0]
             port = conf.get("port", 22)
-        transport = Transport((hostname, port))
+
+        if not key_path:
+            key_path = self.vim.vars.get(
+                "defx_sftp#key_path", str(Path("~/.ssh/id_rsa").expanduser())
+            )
+        if port is None:
+            port = 22
+        transport = Transport((hostname, int(port)))
         rsa_private_key = RSAKey.from_private_key_file(key_path)
         transport.connect(username=username, pkey=rsa_private_key)
         self.client = SFTPClient.from_transport(transport)
@@ -50,7 +54,6 @@ class Source(Base):
     def get_root_candidate(
             self, context: Context, path: Path
     ) -> typing.Dict[str, typing.Any]:
-        self.vim.call('defx#util#print_message', str(path))
         path_str = self._parse_arg(str(path))
         path = SFTPPath(self.client, path_str)
         word = str(path)
