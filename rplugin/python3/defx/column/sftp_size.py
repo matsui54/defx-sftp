@@ -1,12 +1,12 @@
 from pynvim import Nvim
 import typing
 
-from defx.column.size import Column, Highlights
+from defx.column.size import Column as Base, Highlights
 from defx.context import Context
 from defx.util import Candidate
 
 
-class Column(Column):
+class Column(Base):
 
     def __init__(self, vim: Nvim) -> None:
         super().__init__(vim)
