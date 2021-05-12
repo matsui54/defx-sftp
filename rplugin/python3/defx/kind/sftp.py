@@ -59,6 +59,7 @@ class Kind(Base):
             elif action == ClipboardAction.LINK:
                 pass
             view._vim.command('redraw')
+            return
 
         if action == ClipboardAction.COPY:
             if src.is_dir():
