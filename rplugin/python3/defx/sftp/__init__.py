@@ -69,6 +69,8 @@ class SFTPPath(PurePosixPath):
             return self
         parts = self.path.split('/')
         new_path = '/'.join(parts[:-1])
+        if not new_path:
+            new_path = '/'
         return SFTPPath(self.client, new_path)
 
     def relative_to(self, other) -> SFTPPath:

@@ -1,12 +1,8 @@
-# ============================================================================
-# FILE: file.py
-# AUTHOR: Shougo Matsushita <Shougo.Matsu at gmail.com>
-# License: MIT license
-# ============================================================================
-
 from pathlib import Path
-from pynvim import Nvim
+from urllib.parse import urlparse
 import site
+
+from pynvim import Nvim
 from paramiko import SFTPClient
 
 from defx.action import ActionAttr
@@ -19,6 +15,7 @@ from defx.view import View
 
 site.addsitedir(str(Path(__file__).parent.parent))
 from sftp import SFTPPath  # noqa: E402
+from source.sftp import Source  # noqa: E402
 
 
 class Kind(Base):
@@ -26,7 +23,7 @@ class Kind(Base):
     def __init__(self, vim: Nvim, source) -> None:
         self.vim = vim
         self.name = 'sftp'
-        self._source = source
+        self._source: Source = source
 
     @property
     def client(self) -> SFTPClient:
@@ -39,6 +36,9 @@ class Kind(Base):
         return SFTPPath(self.client, self.client.normalize('.'))
 
     def path_maker(self, path: str) -> SFTPPath:
+        path = urlparse(path).path
+        if not path:
+            path = self._source.client.normalize('.')
         return SFTPPath(self.client, path)
 
     def rmtree(self, path: SFTPPath) -> None:

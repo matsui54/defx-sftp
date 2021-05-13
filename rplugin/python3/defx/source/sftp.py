@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 import site
 import typing
@@ -7,7 +6,6 @@ from urllib.parse import urlparse
 from pynvim import Nvim
 from paramiko import Transport, SFTPClient, RSAKey, SSHConfig
 
-from defx.util import error
 from defx.context import Context
 from defx.base.source import Base
 
@@ -28,7 +26,6 @@ class Source(Base):
 
         self.username: str = ''
         self.hostname: str = ''
-        self.path_head: str = ''
 
         self.vars = {
             'root': None,
