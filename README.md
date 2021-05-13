@@ -1,6 +1,5 @@
 ## About
 Defx-sftp is a defx source for sftp.
-Warning: This plugin is under development.
 
 ## Features
 - View and operate remote files via SFTP.
