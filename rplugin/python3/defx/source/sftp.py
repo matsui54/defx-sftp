@@ -89,12 +89,15 @@ class Source(Base):
 
     def _parse_arg(self, path: str) -> str:
         parsed = urlparse(path)
-        if (parsed.username is None and parsed.hostname is None):
+        uname = parsed.username
+        hname = parsed.hostname
+        if hname is None:
             return parsed.path
-        if (parsed.username != self.username or
-                parsed.hostname != self.hostname):
-            # TODO: error handling(cannot connect)
-            self.init_client(parsed.hostname, parsed.username, parsed.port)
+        if uname is None:
+            uname = ''
+        if (uname != self.username or
+                hname != self.hostname):
+            self.init_client(hname, uname, parsed.port)
         rmt_path = parsed.path
         if not rmt_path:
             rmt_path = '.'
