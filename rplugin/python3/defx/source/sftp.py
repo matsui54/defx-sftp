@@ -81,7 +81,7 @@ class Source(Base):
         candidates = []
         for f in path.iterdir():
             candidates.append({
-                'word': f.name,
+                'word': f.name + ('/' if f.is_dir() else ''),
                 'is_directory': f.is_dir(),
                 'action__path': f,
             })
